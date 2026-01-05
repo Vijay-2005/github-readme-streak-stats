@@ -2,6 +2,16 @@
 
 declare(strict_types=1);
 
+// Load environment variables from Vercel into $_SERVER for compatibility
+// Vercel sets env vars via getenv(), but the codebase expects $_SERVER
+$envVars = ['TOKEN', 'TOKEN2', 'TOKEN3', 'TOKEN4', 'TOKEN5'];
+foreach ($envVars as $var) {
+    $value = getenv($var);
+    if ($value !== false) {
+        $_SERVER[$var] = $value;
+    }
+}
+
 // load functions
 require_once __DIR__ . "/../vendor/autoload.php";
 require_once __DIR__ . "/../src/stats.php";
@@ -11,38 +21,42 @@ require_once __DIR__ . "/../src/card.php";
 $dotenv = \Dotenv\Dotenv::createImmutable(dirname(__DIR__, 1));
 $dotenv->safeLoad();
 
-// Check for TOKEN in environment variables (Vercel uses getenv() or $_ENV)
-$token = getenv("TOKEN") ?: ($_ENV["TOKEN"] ?? ($_SERVER["TOKEN"] ?? null));
-
 // if environment variables are not loaded, display error
-if (!$token) {
+if (!isset($_SERVER["TOKEN"])) {
     $message = "Missing token in config. Check Contributing.md for details.";
     renderOutput($message, 500);
 }
 
-// Make TOKEN available for other parts of the code
-$_SERVER["TOKEN"] = $token;
+// set cache to refresh once per three hours
+$cacheMinutes = 3 * 60 * 60;
+header("Expires: " . gmdate("D, d M Y H:i:s", time() + $cacheMinutes) . " GMT");
+header("Last-Modified: " . gmdate("D, d M Y H:i:s") . " GMT");
+header("Cache-Control: public, max-age=$cacheMinutes");
 
-// set cache to refresh once per day
-$timestamp = time();
-$today = date("Y-m-d");
-$tomorrow = date("Y-m-d", strtotime("tomorrow"));
-$seconds = strtotime($tomorrow) - $timestamp;
-header("Cache-Control: max-age={$seconds}, s-maxage={$seconds}, stale-while-revalidate");
-header("Date: " . date("D, d M Y H:i:s", $timestamp) . " GMT");
-header("Expires: " . date("D, d M Y H:i:s", strtotime($tomorrow)) . " GMT");
+// redirect to demo site if user is not given
+if (!isset($_REQUEST["user"])) {
+    header("Location: /demo/");
+    exit();
+}
 
-// set content type to SVG image
-header("Content-Type: image/svg+xml");
-
-// get streak stats for user
 try {
-    $contributionGraphs = getContributionGraphs();
+    // get streak stats for user given in query string
+    $user = preg_replace("/[^a-zA-Z0-9\-]/", "", $_REQUEST["user"]);
+    $startingYear = isset($_REQUEST["starting_year"]) ? intval($_REQUEST["starting_year"]) : null;
+    $contributionGraphs = getContributionGraphs($user, $startingYear);
     $contributions = getContributionDates($contributionGraphs);
-    $stats = getContributionStats($contributions);
-    echo generateCard($stats);
-} catch (InvalidArgumentException $error) {
-    renderOutput($error->getMessage(), 400);
-} catch (AssertionError | Exception $error) {
-    renderOutput($error->getMessage(), 500);
+    if (isset($_GET["mode"]) && $_GET["mode"] === "weekly") {
+        $stats = getWeeklyContributionStats($contributions);
+    } else {
+        // split and normalize excluded days
+        $excludeDays = normalizeDays(explode(",", $_GET["exclude_days"] ?? ""));
+        $stats = getContributionStats($contributions, $excludeDays);
+    }
+    renderOutput($stats);
+} catch (InvalidArgumentException | AssertionError $error) {
+    error_log("Error {$error->getCode()}: {$error->getMessage()}");
+    if ($error->getCode() >= 500) {
+        error_log($error->getTraceAsString());
+    }
+    renderOutput($error->getMessage(), $error->getCode());
 }
