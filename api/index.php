@@ -7,17 +7,21 @@ require_once __DIR__ . "/../vendor/autoload.php";
 require_once __DIR__ . "/../src/stats.php";
 require_once __DIR__ . "/../src/card.php";
 
-// load .env
+// load .env if it exists (for local development)
 $dotenv = \Dotenv\Dotenv::createImmutable(dirname(__DIR__, 1));
 $dotenv->safeLoad();
 
+// Check for TOKEN in environment variables (Vercel uses getenv() or $_ENV)
+$token = getenv("TOKEN") ?: ($_ENV["TOKEN"] ?? ($_SERVER["TOKEN"] ?? null));
+
 // if environment variables are not loaded, display error
-if (!isset($_SERVER["TOKEN"])) {
-    $message = file_exists(dirname(__DIR__ . "../.env", 1))
-        ? "Missing token in config. Check Contributing.md for details."
-        : ".env was not found. Check Contributing.md for details.";
+if (!$token) {
+    $message = "Missing token in config. Check Contributing.md for details.";
     renderOutput($message, 500);
 }
+
+// Make TOKEN available for other parts of the code
+$_SERVER["TOKEN"] = $token;
 
 // set cache to refresh once per day
 $timestamp = time();
